@@ -108,8 +108,8 @@
 ### Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd SAVE-RESTRICT-BOT
+git clone https://github.com/LastPerson07/SAVE-RESTRICT-BOT-V2
+cd SAVE-RESTRICT-BOT-V2
 ```
 
 ### Install dependencies
