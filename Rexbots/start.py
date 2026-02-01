@@ -15,6 +15,7 @@ from pyrogram.errors import (
     InviteHashExpired, UsernameNotOccupied, AuthKeyUnregistered, UserDeactivated, UserDeactivatedBan
 )
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery, InputMediaPhoto
+from pyrogram.raw import functions, types
 from config import API_ID, API_HASH, ERROR_MESSAGE
 from database.db import db
 import math
@@ -101,17 +102,11 @@ class script(object):
 <b>📸 QR Code:</b> <a href='{}'>Scan to Pay</a>
 <i>After Payment: Send Screenshot to Admin for Instant Activation.</i>
 """
-    PROGRESS_BAR = """\
-<b>⚡ Processing...</b>
-
-{bar} {percentage:.1f}%
-
+    PROGRESS_BAR = """<blockquote><b>⚡ Processing...</b>
+<b>{bar}</b> <b>{percentage:.1f}%</b>
 <b>Size:</b> {current} / {total}
-
 <b>Speed:</b> {speed}/s
-
-<b>ETA:</b> {eta}
-"""
+<b>ETA:</b> {eta}</blockquote>"""
     CAPTION = """<b><a href="https://t.me/THEUPDATEDGUYS"></a></b>\n\n<b>⚜️ Powered By : <a href="https://t.me/THEUPDATEDGUYS">THE UPDATED GUYS 😎</a></b>"""
     LIMIT_REACHED = """<b>🚫 Daily Limit Exceeded</b>
 <b>Your 10 free saves for today have been used.</b>
@@ -187,17 +182,17 @@ def progress(current, total, message, type):
         progress.start_time = {}
     if task_id not in progress.start_time:
         progress.start_time[task_id] = now
-    
+   
     if (now - last_time) > 5 or current == total:
         try:
             percentage = current * 100 / total
             speed = current / (now - progress.start_time[task_id]) if (now - progress.start_time[task_id]) > 0 else 0
             eta = (total - current) / speed if speed > 0 else 0
             elapsed = now - progress.start_time[task_id]
-        
+       
             filled_length = int(30 * percentage / 100)
-            bar = '█' * filled_length + '░' * (30 - filled_length)
-        
+            bar = '🟩' * filled_length + '⬜' * (30 - filled_length)
+       
             status = script.PROGRESS_BAR.format(
                 bar=bar,
                 percentage=percentage,
@@ -207,12 +202,12 @@ def progress(current, total, message, type):
                 elapsed=TimeFormatter(elapsed * 1000),
                 eta=TimeFormatter(eta * 1000)
             )
-        
+       
             with open(f'{message.id}{type}status.txt', "w", encoding='utf-8') as fileup:
                 fileup.write(status)
-            
+           
             progress.cache[task_id] = now
-        
+       
             if current == total:
                 progress.start_time.pop(task_id, None)
                 progress.cache.pop(task_id, None)
@@ -339,7 +334,7 @@ async def save(client: Client, message: Message):
             except Exception as e:
                 await message.reply(f"Failed to join: {e}")
             return
-        
+       
         is_limit_reached = await db.check_limit(message.from_user.id)
         if is_limit_reached:
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Upgrade to Premium", callback_data="buy_premium")]])
@@ -349,10 +344,10 @@ async def save(client: Client, message: Message):
                 reply_markup=btn,
                 parse_mode=enums.ParseMode.HTML
             )
-    
+   
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text("<b>⚠️ A Task is Currently Processing.</b>\n<i>Please wait for completion or use /cancel to stop.</i>", parse_mode=enums.ParseMode.HTML)
-        
+       
         is_tg_link = "tg://openmessage" in text
         if is_tg_link:
             url = urlparse(text)
@@ -379,13 +374,13 @@ async def save(client: Client, message: Message):
             is_private_link = "https://t.me/c/" in text
             is_batch = "https://t.me/b/" in text
             is_public_link = not is_private_link and not is_batch
-        
+       
         batch_temp.IS_BATCH[message.from_user.id] = False
         for msgid in range(fromID, toID + 1):
-        
+       
             if batch_temp.IS_BATCH.get(message.from_user.id):
                 break
-        
+       
             if not is_tg_link and is_public_link:
                 username = datas[3]
                 try:
@@ -451,6 +446,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
     if msg_type == "Document": file_size = msg.document.file_size
     elif msg_type == "Video": file_size = msg.video.file_size
     elif msg_type == "Audio": file_size = msg.audio.file_size
+    elif msg_type == "Photo": file_size = msg.photo.file_size if msg.photo else 0
     if file_size > FREE_LIMIT_SIZE:
         if not await db.check_premium(message.from_user.id):
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Upgrade to Premium", callback_data="buy_premium")]])
@@ -468,19 +464,58 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
         except:
             return
     await db.add_traffic(message.from_user.id)
-    smsg = await client.send_message(message.chat.id, '<b>⬇️ Starting Download...</b>', reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
+    buttons = [[InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{message.id}")]]
+    smsg = await client.send_message(message.chat.id, '<b>⬇️ Starting Download...</b>', reply_to_message_id=message.id, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.HTML)
     temp_dir = f"downloads/{message.id}"
     if not os.path.exists(temp_dir): os.makedirs(temp_dir)
     try:
         asyncio.create_task(downstatus(client, f'{message.id}downstatus.txt', smsg, message.chat.id))
-    
-        file = await acc.download_media(
-            msg,
-            file_name=f"{temp_dir}/",
-            progress=progress,
-            progress_args=[message, "down"]
-        )
-    
+        
+        media = getattr(msg, msg_type.lower())
+        if msg_type == "Photo":
+            location = types.InputPhotoFileLocation(
+                id=media.file_id,
+                access_hash=media.access_hash,
+                file_reference=media.file_reference,
+                thumb_size=''
+            )
+            file_name = f"{temp_dir}/photo.jpg"
+        else:
+            location = types.InputDocumentFileLocation(
+                id=media.file_id,
+                access_hash=media.access_hash,
+                file_reference=media.file_reference,
+                thumb_size=''
+            )
+            file_name = f"{temp_dir}/{media.file_name or f'{msg_type.lower()}'}"
+        
+        partial_file = file_name + '.part'
+        if os.path.exists(partial_file):
+            offset = os.path.getsize(partial_file)
+        else:
+            offset = 0
+        
+        chunk_size = 1024 * 1024  # 1MB
+        
+        with open(partial_file, 'ab') as f:
+            while offset < file_size:
+                if batch_temp.IS_BATCH.get(message.from_user.id):
+                    raise Exception("Cancelled")
+                res = await acc.invoke(functions.upload.GetFile(
+                    location=location,
+                    offset=offset,
+                    limit=chunk_size
+                ))
+                if not res.bytes:
+                    break
+                f.write(res.bytes)
+                current_chunk = len(res.bytes)
+                offset += current_chunk
+                progress(offset, file_size, message, "down")
+        
+        os.rename(partial_file, file_name)
+        file = file_name
+        
         if os.path.exists(f'{message.id}downstatus.txt'): os.remove(f'{message.id}downstatus.txt')
     except Exception as e:
         if batch_temp.IS_BATCH.get(message.from_user.id) or "Cancelled" in str(e):
@@ -489,10 +524,10 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
         return await smsg.delete()
     try:
         asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, message.chat.id))
-    
+        
         ph_path = None
         thumb_id = await db.get_thumbnail(message.from_user.id)
-    
+        
         if thumb_id:
             try:
                 ph_path = await client.download_media(thumb_id, file_name=f"{temp_dir}/custom_thumb.jpg")
@@ -521,7 +556,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             await client.send_audio(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
         elif msg_type == "Photo":
             await client.send_photo(message.chat.id, file, caption=final_caption)
-    
+        
     except Exception as e:
          await smsg.edit(f"Upload Failed: {e}")
     if os.path.exists(f'{message.id}upstatus.txt'): os.remove(f'{message.id}upstatus.txt')
@@ -613,6 +648,10 @@ async def button_callbacks(client: Client, callback_query: CallbackQuery):
         )
     elif data == "close_btn":
         await message.delete()
+    elif data.startswith("cancel_"):
+        batch_temp.IS_BATCH[callback_query.from_user.id] = True
+        await callback_query.message.edit_text("❌ **Task Cancelled**")
+        await callback_query.answer("Process cancelled!")
     elif data in ["cmd_list_btn", "user_stats_btn", "dump_chat_btn", "thumb_btn", "caption_btn"]:
         pass
     await callback_query.answer()
