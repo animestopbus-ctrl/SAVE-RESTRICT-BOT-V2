@@ -7,7 +7,8 @@ import time
 import shutil
 import pyrogram
 import requests
-import hashlib 
+import hashlib
+from urllib.parse import urlparse, parse_qs
 from pyrogram import Client, filters, enums
 from pyrogram.errors import (
     FloodWait, UserIsBlocked, InputUserDeactivated, UserAlreadyParticipant,
@@ -34,21 +35,16 @@ REACTIONS = [
     "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂️", "🤷‍♀️",
     "😡"
 ]
-
-
 dev_text = "👨‍💻 Mind Behind This Bot:\n• @DmOwner\n• @akaza7902"
 expected_dev_hash = "b9e63b7578bdec13f3cb3162fe5f5e93dccaba3bfd5c8ddacbb90ffdcdcce402"
 channels_text = "📢 Official Channels:\n• @ReX_update\n• @THEUPDATEDGUYS\n\nStay updated for new features!"
 expected_channels_hash = "e19212e571bd0f6626450dd790029d392c0748c554d4b386a0c0752f4148d37d"
-
 if (
     hashlib.sha256(dev_text.encode('utf-8')).hexdigest() != expected_dev_hash or
     hashlib.sha256(channels_text.encode('utf-8')).hexdigest() != expected_channels_hash
 ):
     raise Exception("Tampered developer info detected! Bot will not start. Fuck the code - crashing now.")
-
 class script(object):
-   
     START_TXT = """<b>👋 Hello {},</b>
 <b>🤖 I am <a href=https://t.me/{}>{}</a></b>
 <i>Your Professional Restricted Content Saver Bot.</i>
@@ -106,14 +102,15 @@ class script(object):
 <i>After Payment: Send Screenshot to Admin for Instant Activation.</i>
 """
     PROGRESS_BAR = """\
-<b>⚡ Processing Task...</b>
-<blockquote>
-<b>Progress: {bar} {percentage:.1f}%</b>
-<b>🚀 Speed:</b> <code>{speed}/s</code>
-<b>💾 Size:</b> <code>{current} of {total}</code>
-<b>⏱ Elapsed:</b> <code>{elapsed}</code>
-<b>⏳ ETA:</b> <code>{eta}</code>
-</blockquote>
+<b>⚡ Processing...</b>
+
+{bar} {percentage:.1f}%
+
+<b>Size:</b> {current} / {total}
+
+<b>Speed:</b> {speed}/s
+
+<b>ETA:</b> {eta}
 """
     CAPTION = """<b><a href="https://t.me/THEUPDATEDGUYS"></a></b>\n\n<b>⚜️ Powered By : <a href="https://t.me/THEUPDATEDGUYS">THE UPDATED GUYS 😎</a></b>"""
     LIMIT_REACHED = """<b>🚫 Daily Limit Exceeded</b>
@@ -183,26 +180,24 @@ def progress(current, total, message, type):
         raise Exception("Cancelled")
     if not hasattr(progress, "cache"):
         progress.cache = {}
-   
     now = time.time()
     task_id = f"{message.id}{type}"
     last_time = progress.cache.get(task_id, 0)
-   
     if not hasattr(progress, "start_time"):
         progress.start_time = {}
     if task_id not in progress.start_time:
         progress.start_time[task_id] = now
-       
+    
     if (now - last_time) > 5 or current == total:
         try:
             percentage = current * 100 / total
             speed = current / (now - progress.start_time[task_id]) if (now - progress.start_time[task_id]) > 0 else 0
             eta = (total - current) / speed if speed > 0 else 0
             elapsed = now - progress.start_time[task_id]
-           
-            filled_length = int(percentage / 5)
-            bar = '█' * filled_length + ' ' * (20 - filled_length)
-           
+        
+            filled_length = int(30 * percentage / 100)
+            bar = '█' * filled_length + '░' * (30 - filled_length)
+        
             status = script.PROGRESS_BAR.format(
                 bar=bar,
                 percentage=percentage,
@@ -212,12 +207,12 @@ def progress(current, total, message, type):
                 elapsed=TimeFormatter(elapsed * 1000),
                 eta=TimeFormatter(eta * 1000)
             )
-           
+        
             with open(f'{message.id}{type}status.txt', "w", encoding='utf-8') as fileup:
                 fileup.write(status)
-               
+            
             progress.cache[task_id] = now
-           
+        
             if current == total:
                 progress.start_time.pop(task_id, None)
                 progress.cache.pop(task_id, None)
@@ -297,7 +292,6 @@ async def settings_panel(client, callback_query):
     user_id = callback_query.from_user.id
     is_premium = await db.check_premium(user_id)
     badge = "💎 Premium Member" if is_premium else "👤 Standard User"
-   
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📜 Command List", callback_data="cmd_list_btn")],
         [InlineKeyboardButton("📊 Usage Stats", callback_data="user_stats_btn")],
@@ -306,9 +300,7 @@ async def settings_panel(client, callback_query):
         [InlineKeyboardButton("📝 Edit Caption", callback_data="caption_btn")],
         [InlineKeyboardButton("⬅️ Return to Home", callback_data="start_btn")]
     ])
-   
     text = f"<b>⚙️ Settings Dashboard</b>\n\n<b>Account Status:</b> {badge}\n<b>User ID:</b> <code>{user_id}</code>\n\n<i>Customize and manage your bot preferences below for an optimized experience:</i>"
-   
     await callback_query.edit_message_caption(
         caption=text,
         reply_markup=buttons,
@@ -316,8 +308,38 @@ async def settings_panel(client, callback_query):
     )
 @Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
 async def save(client: Client, message: Message):
-    if "https://t.me/" in message.text:
-       
+    text = message.text
+    if "https://t.me/" in text or "tg://" in text:
+        if "t.me/+" in text or "t.me/joinchat/" in text:
+            user_data = await db.get_session(message.from_user.id)
+            if user_data is None:
+                await message.reply(
+                    "<b>🔒 Authentication Required</b>\n\n"
+                    "<i>Access to this content requires login.</i>\n"
+                    "<i>Use /login to securely authorize your account.</i>",
+                    parse_mode=enums.ParseMode.HTML
+                )
+                return
+            try:
+                acc = Client(
+                    "saverestricted",
+                    session_string=user_data,
+                    api_hash=API_HASH,
+                    api_id=API_ID,
+                    in_memory=True,
+                    max_concurrent_transmissions=10
+                )
+                await acc.connect()
+            except Exception as e:
+                return await message.reply(f"<b>❌ Authentication Failed</b>\n\n<i>Your session may have expired. Please /logout and /login again.</i>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
+            hash_part = text.split('/')[-1].lstrip('+')
+            try:
+                await acc.join_chat(hash_part)
+                await message.reply("Joined the chat successfully. Now send the message link to save content.")
+            except Exception as e:
+                await message.reply(f"Failed to join: {e}")
+            return
+        
         is_limit_reached = await db.check_limit(message.from_user.id)
         if is_limit_reached:
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Upgrade to Premium", callback_data="buy_premium")]])
@@ -327,26 +349,44 @@ async def save(client: Client, message: Message):
                 reply_markup=btn,
                 parse_mode=enums.ParseMode.HTML
             )
-       
+    
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text("<b>⚠️ A Task is Currently Processing.</b>\n<i>Please wait for completion or use /cancel to stop.</i>", parse_mode=enums.ParseMode.HTML)
-        datas = message.text.split("/")
-        temp = datas[-1].replace("?single", "").split("-")
-        fromID = int(temp[0].strip())
-        try:
-            toID = int(temp[1].strip())
-        except:
-            toID = fromID
+        
+        is_tg_link = "tg://openmessage" in text
+        if is_tg_link:
+            url = urlparse(text)
+            query = parse_qs(url.query)
+            user_id = query.get('user_id', [None])[0]
+            message_id = query.get('message_id', [None])[0]
+            if user_id and message_id:
+                fromID = int(message_id)
+                toID = fromID
+                chat_target = int(user_id)
+                is_private_link = False
+                is_batch = False
+                is_public_link = False
+            else:
+                return await message.reply("Invalid tg link format.")
+        else:
+            datas = text.split("/")
+            temp = datas[-1].replace("?single", "").split("-")
+            fromID = int(temp[0].strip())
+            try:
+                toID = int(temp[1].strip())
+            except:
+                toID = fromID
+            is_private_link = "https://t.me/c/" in text
+            is_batch = "https://t.me/b/" in text
+            is_public_link = not is_private_link and not is_batch
+        
         batch_temp.IS_BATCH[message.from_user.id] = False
-        is_private_link = "https://t.me/c/" in message.text
-        is_batch = "https://t.me/b/" in message.text
-        is_public_link = not is_private_link and not is_batch
         for msgid in range(fromID, toID + 1):
-           
+        
             if batch_temp.IS_BATCH.get(message.from_user.id):
                 break
-           
-            if is_public_link:
+        
+            if not is_tg_link and is_public_link:
                 username = datas[3]
                 try:
                     await client.copy_message(
@@ -383,7 +423,9 @@ async def save(client: Client, message: Message):
             except Exception as e:
                 batch_temp.IS_BATCH[message.from_user.id] = True
                 return await message.reply(f"<b>❌ Authentication Failed</b>\n\n<i>Your session may have expired. Please /logout and /login again.</i>\n<code>{e}</code>", parse_mode=enums.ParseMode.HTML)
-            if is_private_link:
+            if is_tg_link:
+                await handle_restricted_content(client, acc, message, chat_target, msgid)
+            elif is_private_link:
                 chatid = int("-100" + datas[4])
                 await handle_restricted_content(client, acc, message, chatid, msgid)
             elif is_batch:
@@ -402,7 +444,6 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
         return
     if msg.empty:
         return
-   
     msg_type = get_message_type(msg)
     if not msg_type:
         return
@@ -410,7 +451,6 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
     if msg_type == "Document": file_size = msg.document.file_size
     elif msg_type == "Video": file_size = msg.video.file_size
     elif msg_type == "Audio": file_size = msg.audio.file_size
-   
     if file_size > FREE_LIMIT_SIZE:
         if not await db.check_premium(message.from_user.id):
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Upgrade to Premium", callback_data="buy_premium")]])
@@ -429,19 +469,18 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             return
     await db.add_traffic(message.from_user.id)
     smsg = await client.send_message(message.chat.id, '<b>⬇️ Starting Download...</b>', reply_to_message_id=message.id, parse_mode=enums.ParseMode.HTML)
-   
     temp_dir = f"downloads/{message.id}"
     if not os.path.exists(temp_dir): os.makedirs(temp_dir)
     try:
         asyncio.create_task(downstatus(client, f'{message.id}downstatus.txt', smsg, message.chat.id))
-       
+    
         file = await acc.download_media(
             msg,
             file_name=f"{temp_dir}/",
             progress=progress,
             progress_args=[message, "down"]
         )
-       
+    
         if os.path.exists(f'{message.id}downstatus.txt'): os.remove(f'{message.id}downstatus.txt')
     except Exception as e:
         if batch_temp.IS_BATCH.get(message.from_user.id) or "Cancelled" in str(e):
@@ -450,10 +489,10 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
         return await smsg.delete()
     try:
         asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, message.chat.id))
-       
+    
         ph_path = None
         thumb_id = await db.get_thumbnail(message.from_user.id)
-       
+    
         if thumb_id:
             try:
                 ph_path = await client.download_media(thumb_id, file_name=f"{temp_dir}/custom_thumb.jpg")
@@ -482,7 +521,7 @@ async def handle_restricted_content(client: Client, acc, message: Message, chat_
             await client.send_audio(message.chat.id, file, thumb=ph_path, caption=final_caption, progress=progress, progress_args=[message, "up"])
         elif msg_type == "Photo":
             await client.send_photo(message.chat.id, file, caption=final_caption)
-       
+    
     except Exception as e:
          await smsg.edit(f"Upload Failed: {e}")
     if os.path.exists(f'{message.id}upstatus.txt'): os.remove(f'{message.id}upstatus.txt')
@@ -529,7 +568,6 @@ async def button_callbacks(client: Client, callback_query: CallbackQuery):
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode=enums.ParseMode.HTML
         )
-  
     elif data == "about_btn":
         buttons = [[InlineKeyboardButton("⬅️ Back to Home", callback_data="start_btn")]]
         await client.edit_message_caption(
